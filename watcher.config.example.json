@@ -1,0 +1,28 @@
+{
+  "publicRpcUrl": "https://testnet.asentum.com",
+  "operatorAddress": "0xYourValidatorOrWalletAddress",
+  "scanWindowBlocks": 256,
+  "telegram": {
+    "token": "123456:telegram-bot-token",
+    "chatIds": []
+  },
+  "local": {
+    "nodeRpcUrl": "http://127.0.0.1:8545",
+    "processNames": ["asentum-validator"],
+    "systemdServices": ["asentum-validator"],
+    "dockerContainers": [],
+    "diskPaths": ["/"],
+    "logFiles": []
+  },
+  "thresholds": {
+    "pollSeconds": 60,
+    "reminderMinutes": 60,
+    "requestTimeoutMs": 8000,
+    "localHeightLagBlocks": 3,
+    "publicBlockStaleSeconds": 180,
+    "diskWarnPercent": 85,
+    "diskCriticalPercent": 93,
+    "memoryWarnPercent": 92,
+    "proposalMaxMissedBlocks": 0
+  }
+}

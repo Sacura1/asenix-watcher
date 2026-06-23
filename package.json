@@ -1,0 +1,13 @@
+{
+  "name": "asenix-watcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "agent": "node ./src/agent.mjs",
+    "bot": "node ./src/bot.mjs",
+    "probe": "node ./src/probe.mjs",
+    "server": "node ./src/server.mjs",
+    "start": "node ./src/server.mjs"
+  }
+}

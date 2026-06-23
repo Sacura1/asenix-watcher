@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+watcher.config.json
+watcher-state.json
+watcher-server-state.json
+*.state.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
