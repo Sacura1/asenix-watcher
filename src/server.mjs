@@ -564,6 +564,14 @@ async function handleTelegramMessage(message) {
   const [rawCommand, ...args] = text.split(/\s+/);
   const command = rawCommand.toLowerCase().split('@')[0];
 
+  if (command) {
+    try {
+      await telegram.sendChatAction(chatId, 'typing');
+    } catch {
+      // Non-critical; responses should still be sent if chat actions fail.
+    }
+  }
+
   if (command === '/start' || command === '/help') {
     if (chat.address) {
       await telegram.sendMessage(
@@ -695,6 +703,11 @@ async function handleTelegramMessage(message) {
 async function handleCallback(callbackQuery) {
   await telegram.answerCallbackQuery(callbackQuery.id);
   const chatId = String(callbackQuery.message.chat.id);
+  try {
+    await telegram.sendChatAction(chatId, 'typing');
+  } catch {
+    // Non-critical; callbacks should still continue if chat actions fail.
+  }
   const data = String(callbackQuery.data ?? '');
   const synthetic = {
     chat: { id: chatId },

@@ -34,6 +34,13 @@ export class TelegramClient {
     return this.call('setMyCommands', { commands });
   }
 
+  async sendChatAction(chatId, action = 'typing') {
+    return this.call('sendChatAction', {
+      action,
+      chat_id: chatId,
+    });
+  }
+
   async sendMessage(chatId, text, options = {}) {
     const chunks = [];
     for (let index = 0; index < text.length; index += 3600) {
