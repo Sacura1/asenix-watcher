@@ -11,6 +11,8 @@ primary_region = "lhr"
   ASENIX_SCAN_WINDOW_BLOCKS = "256"
   ASENIX_POLL_SECONDS = "60"
   ASENIX_REMINDER_MINUTES = "60"
+  ASENIX_PUBLIC_BLOCK_STALE_SECONDS = "600"
+  ASENIX_PUBLIC_BLOCK_CRITICAL_SECONDS = "3600"
 
 [mounts]
   source = "asenix_watcher_data"

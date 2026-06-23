@@ -74,6 +74,38 @@ function findAddressInObject(value, address) {
   return false;
 }
 
+function collectAddresses(value, addresses = new Set()) {
+  if (value === null || value === undefined) return addresses;
+  if (typeof value === 'string') {
+    if (/^0x[0-9a-fA-F]{40}$/.test(value)) addresses.add(value.toLowerCase());
+    return addresses;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectAddresses(item, addresses);
+    return addresses;
+  }
+  if (typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (/^0x[0-9a-fA-F]{40}$/.test(key)) addresses.add(key.toLowerCase());
+      collectAddresses(item, addresses);
+    }
+  }
+  return addresses;
+}
+
+function countValidators(validators) {
+  if (!validators) return null;
+  if (Array.isArray(validators)) return validators.length;
+  if (Array.isArray(validators.validators)) return validators.validators.length;
+  if (Array.isArray(validators.activeValidators)) return validators.activeValidators.length;
+
+  const addressKeys = Object.keys(validators).filter((key) => /^0x[0-9a-fA-F]{40}$/.test(key));
+  if (addressKeys.length) return addressKeys.length;
+
+  const addresses = collectAddresses(validators);
+  return addresses.size || null;
+}
+
 async function mapLimit(items, limit, mapper) {
   const results = new Array(items.length);
   let cursor = 0;
@@ -181,6 +213,7 @@ export async function collectChainSnapshot({
     metadata,
     ready,
     rpcUrl,
+    validatorCount: countValidators(validators),
     validatorSet: validators,
     window: {
       blocksRequested: windowSize,

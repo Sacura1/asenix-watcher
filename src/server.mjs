@@ -42,6 +42,12 @@ const state = await loadJson(statePath, {
 state.chats ??= {};
 state.telegramOffset ??= 0;
 
+try {
+  await setupBotCommands();
+} catch (error) {
+  console.error('Failed to set Telegram bot command menu:', error);
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -86,12 +92,18 @@ function addressCode(address) {
 function formatAge(iso) {
   if (!iso) return 'never';
   const seconds = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
+  return `${formatDuration(seconds)} ago`;
+}
+
+function formatDuration(secondsInput) {
+  if (secondsInput === null || secondsInput === undefined) return 'unknown';
+  const seconds = Math.max(0, Math.round(Number(secondsInput)));
+  if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }
 
 function formatAse(balance) {
@@ -114,7 +126,7 @@ function escapeHtml(value) {
 }
 
 function statusIcon(status) {
-  if (status === 'critical' || status === 'bad') return '\u274c';
+  if (status === 'critical' || status === 'bad' || status === 'stale') return '\u274c';
   if (status === 'warning') return '\u26a0\ufe0f';
   if (status === 'info') return '\u2139\ufe0f';
   return '\u2705';
@@ -124,22 +136,72 @@ function dashboardKeyboard() {
   return {
     inline_keyboard: [
       [
-        { callback_data: 'status', text: '\ud83d\udcca Dashboard' },
-        { callback_data: 'chain', text: '\ud83d\udd17 Chain' },
+        { callback_data: 'status', text: '\ud83d\udcca Status' },
+        { callback_data: 'chain', text: '\ud83d\udd17 Chain status' },
       ],
       [
-        { callback_data: 'node', text: '\ud83d\udda5\ufe0f Machine' },
-        { callback_data: 'connect_machine', text: '\u2795 Machine alerts' },
+        { callback_data: 'node', text: '\ud83d\udda5\ufe0f Machine status' },
+        { callback_data: 'connect_machine', text: '\u2795 Setup alerts' },
       ],
       [{ callback_data: 'help', text: '\u2754 Help' }],
     ],
   };
 }
 
+function persistentMenuKeyboard() {
+  return {
+    is_persistent: true,
+    keyboard: [
+      [{ text: 'Status' }, { text: 'Chain status' }],
+      [{ text: 'Machine status' }, { text: 'Setup alerts' }],
+      [{ text: 'Help' }],
+    ],
+    resize_keyboard: true,
+  };
+}
+
+function normalizeCommandText(text) {
+  const normalized = String(text ?? '').trim().toLowerCase();
+  const map = new Map([
+    ['status', '/status'],
+    ['dashboard', '/status'],
+    ['chain', '/chain'],
+    ['chain status', '/chain'],
+    ['validator status', '/chain'],
+    ['machine', '/node'],
+    ['machine status', '/node'],
+    ['node', '/node'],
+    ['node status', '/node'],
+    ['setup alerts', '/connect_machine'],
+    ['machine alerts', '/connect_machine'],
+    ['connect machine', '/connect_machine'],
+    ['help', '/help'],
+  ]);
+  return map.get(normalized) ?? text;
+}
+
+async function setupBotCommands() {
+  await telegram.setMyCommands([
+    { command: 'status', description: 'Open validator status dashboard' },
+    { command: 'chain', description: 'Check public chain health' },
+    { command: 'node', description: 'Check machine alert status' },
+    { command: 'connect_machine', description: 'Set up machine alerts' },
+    { command: 'add', description: 'Add validator wallet' },
+    { command: 'remove', description: 'Remove this chat data' },
+    { command: 'help', description: 'Show help' },
+  ]);
+}
+
 function validatorSetText(isValidator) {
   return isValidator
     ? 'found'
     : 'not found - this usually means the wallet is not currently in the active validator set, but it does not by itself prove the machine is offline';
+}
+
+function validatorCountText(chain) {
+  return chain?.validatorCount === null || chain?.validatorCount === undefined
+    ? 'unknown'
+    : chain.validatorCount.toLocaleString();
 }
 
 function explainProposalWindow(chain) {
@@ -151,15 +213,102 @@ function explainProposalWindow(chain) {
   return `This validator produced ${count} of the last ${scanned} checked blocks.`;
 }
 
+function latestBlockAgeText(chain) {
+  const age = chain?.window?.latestBlockAgeSec;
+  return age === null || age === undefined ? 'unknown' : `${formatDuration(age)} ago`;
+}
+
+function appendChainStats(lines, chain) {
+  const chainHealth = analyzeChainHealth(chain);
+  lines.push(`\ud83d\udd17 <b>Current block:</b> #${chain.chain.height.toLocaleString()}`);
+  lines.push(`\ud83d\udcca <b>Total blocks:</b> ${chain.chain.height.toLocaleString()}`);
+  lines.push(`${statusIcon(chainHealth.issues.find((issue) => issue.label === 'Last block')?.status ?? 'ok')} <b>Last block age:</b> ${escapeHtml(latestBlockAgeText(chain))}`);
+  lines.push(`${statusIcon(chainHealth.issues.find((issue) => issue.label === 'Validator set')?.status ?? 'ok')} <b>Total validators:</b> ${escapeHtml(validatorCountText(chain))}`);
+  lines.push(`\ud83d\udce6 <b>Mempool:</b> ${chain.chain.mempoolSize.toLocaleString()}`);
+  if (chain.chain.latestProposer) {
+    lines.push(`\ud83e\uddf1 <b>Latest proposer:</b> <code>${escapeHtml(shortAddress(chain.chain.latestProposer))}</code>`);
+  }
+}
+
+function analyzeChainHealth(chain) {
+  const issues = [];
+  if (!chain) {
+    return {
+      issues: [{ label: 'Public chain check', status: 'warning', text: 'Could not read chain data' }],
+      status: 'warning',
+    };
+  }
+
+  if (chain.validatorCount === 0) {
+    issues.push({
+      label: 'Validator set',
+      status: 'critical',
+      text: 'No validators returned by public RPC',
+    });
+  } else if (chain.validatorCount === null || chain.validatorCount === undefined) {
+    issues.push({
+      label: 'Validator set',
+      status: 'info',
+      text: 'Validator count unavailable from public RPC',
+    });
+  }
+
+  if (chain.window.latestBlockAgeSec === null || chain.window.latestBlockAgeSec === undefined) {
+    issues.push({
+      label: 'Last block',
+      status: 'warning',
+      text: 'Could not read the latest block timestamp',
+    });
+  } else if (chain.window.latestBlockAgeSec >= config.thresholds.publicBlockCriticalSeconds) {
+    issues.push({
+      label: 'Last block',
+      status: 'critical',
+      text: `Latest scanned block is ${formatDuration(chain.window.latestBlockAgeSec)} old`,
+    });
+  } else if (chain.window.latestBlockAgeSec >= config.thresholds.publicBlockStaleSeconds) {
+    issues.push({
+      label: 'Last block',
+      status: 'warning',
+      text: `Latest scanned block is ${formatDuration(chain.window.latestBlockAgeSec)} old`,
+    });
+  }
+
+  const highest = issues.some((issue) => issue.status === 'critical')
+    ? 'critical'
+    : issues.some((issue) => issue.status === 'warning')
+      ? 'warning'
+      : issues.some((issue) => issue.status === 'info')
+        ? 'info'
+        : 'ok';
+
+  return { issues, status: highest };
+}
+
 function scoreFromChecks({ chain = null, machineStatus = 'not-connected' }) {
   let score = 100;
   const checks = [];
 
+  const chainHealth = analyzeChainHealth(chain);
+  if (chainHealth.status === 'critical') score -= 35;
+  else if (chainHealth.status === 'warning') score -= 20;
+  else if (chainHealth.status === 'info') score -= 5;
+
   if (!chain) {
     score -= 25;
-    checks.push({ label: 'Public chain check', status: 'warning', text: 'Could not read chain data' });
   } else {
     checks.push({ label: 'Public chain check', status: 'ok', text: `Height ${chain.chain.height}` });
+    checks.push({
+      label: 'Last block',
+      status: chainHealth.issues.find((issue) => issue.label === 'Last block')?.status ?? 'ok',
+      text: chain.window.latestBlockAgeSec === null || chain.window.latestBlockAgeSec === undefined
+        ? 'Timestamp unavailable'
+        : `${formatDuration(chain.window.latestBlockAgeSec)} old`,
+    });
+    checks.push({
+      label: 'Total validators',
+      status: chainHealth.issues.find((issue) => issue.label === 'Validator set')?.status ?? 'ok',
+      text: validatorCountText(chain),
+    });
     if (chain.isValidator) {
       checks.push({ label: 'Validator set', status: 'ok', text: 'Wallet is active in validator data' });
     } else {
@@ -172,6 +321,10 @@ function scoreFromChecks({ chain = null, machineStatus = 'not-connected' }) {
       score -= 10;
       checks.push({ label: 'Recent proposals', status: 'info', text: explainProposalWindow(chain) });
     }
+  }
+
+  for (const issue of chainHealth.issues) {
+    if (!checks.some((check) => check.label === issue.label)) checks.push(issue);
   }
 
   if (machineStatus === 'not-connected') {
@@ -263,9 +416,9 @@ async function formatStatus(chat) {
   ];
 
   if (chain) {
+    appendChainStats(lines, chain);
     lines.push(`${chain.isValidator ? '\u2705' : '\u26a0\ufe0f'} <b>Validator:</b> ${chain.isValidator ? 'active in validator data' : 'not found in validator data'}`);
     lines.push(`\ud83d\udcb0 <b>Balance:</b> ${escapeHtml(formatAse(chain.balance))}`);
-    lines.push(`\ud83d\udd17 <b>Chain height:</b> ${chain.chain.height.toLocaleString()}`);
     lines.push(`\ud83c\udfd7\ufe0f <b>Recent block production:</b> ${escapeHtml(explainProposalWindow(chain))}`);
     if (chain.window.lastProposedBlock) {
       lines.push(`\ud83e\uddf1 <b>Last proposed block:</b> #${chain.window.lastProposedBlock.height.toLocaleString()}`);
@@ -324,6 +477,14 @@ async function assessChat(chat) {
   let chainError = '';
   try {
     chain = await collectChain(chat.address);
+    for (const issue of analyzeChainHealth(chain).issues) {
+      if (issue.status === 'critical' || issue.status === 'warning') {
+        issues.push({
+          severity: issue.status,
+          text: issue.text,
+        });
+      }
+    }
     if (!chain.isValidator) {
       issues.push({
         severity: 'warning',
@@ -366,9 +527,9 @@ async function assessChat(chat) {
 
   if (chain) {
     lines.push('');
+    appendChainStats(lines, chain);
     lines.push(`${chain.isValidator ? '\u2705' : '\u26a0\ufe0f'} <b>Validator:</b> ${chain.isValidator ? 'active in validator data' : 'not found in validator data'}`);
     lines.push(`\ud83d\udcb0 <b>Balance:</b> ${escapeHtml(formatAse(chain.balance))}`);
-    lines.push(`\ud83d\udd17 <b>Chain height:</b> ${chain.chain.height.toLocaleString()}`);
     lines.push(`\ud83c\udfd7\ufe0f <b>Recent block production:</b> ${escapeHtml(explainProposalWindow(chain))}`);
     if (chain.window.lastProposedBlock) {
       lines.push(`\ud83e\uddf1 <b>Last proposed block:</b> #${chain.window.lastProposedBlock.height.toLocaleString()}`);
@@ -399,7 +560,7 @@ async function assessChat(chat) {
 async function handleTelegramMessage(message) {
   const chatId = String(message.chat.id);
   const chat = getChat(chatId);
-  const text = String(message.text ?? '').trim();
+  const text = String(normalizeCommandText(message.text ?? '')).trim();
   const [rawCommand, ...args] = text.split(/\s+/);
   const command = rawCommand.toLowerCase().split('@')[0];
 
@@ -411,9 +572,9 @@ async function handleTelegramMessage(message) {
           '<b>Asenix Watcher</b>',
           addressCode(chat.address),
           '',
-          'Use the buttons below to check your validator.',
+          'Use the menu buttons below to check your validator.',
         ].join('\n'),
-        { parseMode: 'HTML', replyMarkup: dashboardKeyboard() },
+        { parseMode: 'HTML', replyMarkup: persistentMenuKeyboard() },
       );
     } else {
       await telegram.sendMessage(
@@ -425,9 +586,9 @@ async function handleTelegramMessage(message) {
           '<b>Start:</b>',
           '<code>/add 0xYourValidatorWallet</code>',
           '',
-          'Then use the dashboard buttons.',
+          'After adding a wallet, use the menu buttons below.',
         ].join('\n'),
-        { parseMode: 'HTML', replyMarkup: dashboardKeyboard() },
+        { parseMode: 'HTML', replyMarkup: persistentMenuKeyboard() },
       );
     }
     return;
@@ -454,7 +615,7 @@ async function handleTelegramMessage(message) {
         '',
         'Machine alerts are optional and add peers, sync, service, disk, memory, and log checks.',
       ].join('\n'),
-      { parseMode: 'HTML', replyMarkup: dashboardKeyboard() },
+      { parseMode: 'HTML', replyMarkup: persistentMenuKeyboard() },
     );
     return;
   }
@@ -479,10 +640,13 @@ async function handleTelegramMessage(message) {
         `<b>Chain Status</b>`,
         addressCode(chat.address),
         '',
-        `\ud83d\udd17 <b>Height:</b> ${chain.chain.height.toLocaleString()}`,
+        ...(() => {
+          const stats = [];
+          appendChainStats(stats, chain);
+          return stats;
+        })(),
         `\ud83d\udcb0 <b>Balance:</b> ${escapeHtml(formatAse(chain.balance))}`,
         `${chain.isValidator ? '\u2705' : '\u26a0\ufe0f'} <b>Validator:</b> ${chain.isValidator ? 'active in validator data' : escapeHtml(validatorSetText(false))}`,
-        `\ud83d\udce6 <b>Mempool:</b> ${chain.chain.mempoolSize}`,
         `\ud83c\udfd7\ufe0f <b>Block production:</b> ${escapeHtml(explainProposalWindow(chain))}`,
         chain.window.lastProposedBlock
           ? `\ud83e\uddf1 <b>Last proposed block:</b> #${chain.window.lastProposedBlock.height.toLocaleString()}`

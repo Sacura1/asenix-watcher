@@ -101,9 +101,13 @@ export async function loadConfig() {
       value(fileConfig, 'thresholds.proposalMaxMissedBlocks', 'ASENIX_PROPOSAL_MAX_MISSED_BLOCKS', 0),
       0,
     ),
+    publicBlockCriticalSeconds: numberValue(
+      value(fileConfig, 'thresholds.publicBlockCriticalSeconds', 'ASENIX_PUBLIC_BLOCK_CRITICAL_SECONDS', 3600),
+      3600,
+    ),
     publicBlockStaleSeconds: numberValue(
-      value(fileConfig, 'thresholds.publicBlockStaleSeconds', 'ASENIX_PUBLIC_BLOCK_STALE_SECONDS', 180),
-      180,
+      value(fileConfig, 'thresholds.publicBlockStaleSeconds', 'ASENIX_PUBLIC_BLOCK_STALE_SECONDS', 600),
+      600,
     ),
     reminderMinutes: numberValue(
       value(fileConfig, 'thresholds.reminderMinutes', 'ASENIX_REMINDER_MINUTES', 60),

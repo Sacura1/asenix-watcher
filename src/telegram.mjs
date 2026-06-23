@@ -30,6 +30,10 @@ export class TelegramClient {
     });
   }
 
+  async setMyCommands(commands) {
+    return this.call('setMyCommands', { commands });
+  }
+
   async sendMessage(chatId, text, options = {}) {
     const chunks = [];
     for (let index = 0; index < text.length; index += 3600) {

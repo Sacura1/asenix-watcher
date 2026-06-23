@@ -103,6 +103,8 @@ ASENIX_PUBLIC_RPC_URL=https://testnet.asentum.com
 ASENIX_SCAN_WINDOW_BLOCKS=256
 ASENIX_POLL_SECONDS=60
 ASENIX_REMINDER_MINUTES=60
+ASENIX_PUBLIC_BLOCK_STALE_SECONDS=600
+ASENIX_PUBLIC_BLOCK_CRITICAL_SECONDS=3600
 ASENIX_WATCHER_SERVER_STATE=/data/watcher-server-state.json
 ```
 
@@ -112,6 +114,10 @@ server. It is used when generating Machine alerts setup commands.
 `ASENIX_POLL_SECONDS` controls how often the server checks Telegram and monitored
 wallet status. `ASENIX_REMINDER_MINUTES` controls how often continuing problems
 are repeated after the first alert.
+
+`ASENIX_PUBLIC_BLOCK_STALE_SECONDS` controls when the bot warns that public chain
+blocks look stale. `ASENIX_PUBLIC_BLOCK_CRITICAL_SECONDS` controls when that
+becomes a critical chain-health alert.
 
 ## Running The Server
 
