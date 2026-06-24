@@ -126,10 +126,44 @@ function escapeHtml(value) {
 }
 
 function statusIcon(status) {
-  if (status === 'critical' || status === 'bad' || status === 'stale') return '\u274c';
-  if (status === 'warning') return '\u26a0\ufe0f';
-  if (status === 'info') return '\u2139\ufe0f';
+  if (status === 'critical' || status === 'bad') return '\u274c';
+  if (status === 'warning' || status === 'stale') return '\u26a0\ufe0f';
+  if (status === 'info' || status === 'not-connected') return '\u2139\ufe0f';
   return '\u2705';
+}
+
+function machineHeartbeatAgeSeconds(agent) {
+  if (!agent?.lastSeenAt) return null;
+  return Math.max(0, Math.round((Date.now() - Date.parse(agent.lastSeenAt)) / 1000));
+}
+
+function machineStaleSeconds() {
+  return Math.max(
+    config.thresholds.machineHeartbeatStaleSeconds,
+    config.thresholds.pollSeconds * 3,
+  );
+}
+
+function machineStatusFromAgent(agent) {
+  if (!agent?.lastSeenAt) return 'not-connected';
+  const seconds = machineHeartbeatAgeSeconds(agent);
+  if (seconds !== null && seconds > machineStaleSeconds()) return 'stale';
+  return agent.snapshot?.local?.status ?? 'unknown';
+}
+
+function machineStatusText(status) {
+  if (status === 'ok') return 'Healthy';
+  if (status === 'warning') return 'Needs attention';
+  if (status === 'critical') return 'Action needed';
+  if (status === 'stale') return 'Heartbeat delayed';
+  if (status === 'not-connected') return 'Not connected';
+  return 'Unknown';
+}
+
+function processStateText(item) {
+  if (item.ok && item.coveredBy === 'systemd') return `verified by systemd (${item.systemdService})`;
+  if (item.ok) return 'running';
+  return 'not matched';
 }
 
 function dashboardKeyboard() {
@@ -335,6 +369,9 @@ function scoreFromChecks({ chain = null, machineStatus = 'not-connected' }) {
   } else if (machineStatus === 'warning') {
     score -= 20;
     checks.push({ label: 'Machine alerts', status: 'warning', text: 'Connected, but warnings were found' });
+  } else if (machineStatus === 'stale') {
+    score -= 20;
+    checks.push({ label: 'Machine alerts', status: 'warning', text: 'Heartbeat is delayed; waiting for the next machine report' });
   } else {
     score -= 40;
     checks.push({ label: 'Machine alerts', status: 'critical', text: `Machine status is ${machineStatus}` });
@@ -357,37 +394,47 @@ async function collectChain(address) {
 }
 
 function summarizeAgent(agent) {
-  if (!agent?.lastSeenAt) return ['Machine alerts: not connected'];
-  const snapshot = agent.snapshot;
-  const lines = [
-    `Machine alerts: connected, last heartbeat ${formatAge(agent.lastSeenAt)}`,
-    `Machine: ${agent.hostname || 'unknown'}`,
-  ];
+  const status = machineStatusFromAgent(agent);
+  const lines = ['<b>Machine Status</b>', ''];
+  if (!agent?.lastSeenAt) {
+    lines.push(`${statusIcon('not-connected')} <b>Status:</b> ${machineStatusText('not-connected')}`);
+    lines.push('\u2139\ufe0f <b>Machine alerts:</b> Run Setup alerts on the node machine to enable local checks.');
+    return lines;
+  }
 
+  const snapshot = agent.snapshot;
   const local = snapshot?.local;
+  lines.push(`${statusIcon(status)} <b>Status:</b> ${machineStatusText(status)}`);
+  lines.push(`\ud83d\udd52 <b>Heartbeat:</b> ${escapeHtml(formatAge(agent.lastSeenAt))}`);
+  lines.push(`\ud83d\udda5\ufe0f <b>Machine:</b> ${escapeHtml(agent.hostname || 'unknown')}`);
+
   if (!local) return lines;
   if (local.localRpc?.ok) {
-    lines.push(`Local node: height ${local.localRpc.chain.height}, ready ${local.localRpc.ready ? 'yes' : 'no'}`);
+    lines.push(`\ud83d\udd17 <b>Local node:</b> height ${local.localRpc.chain.height.toLocaleString()}, ready ${local.localRpc.ready ? 'yes' : 'no'}`);
   } else if (local.localRpc) {
-    lines.push(`Local node: failed (${local.localRpc.error})`);
+    lines.push(`\u274c <b>Local node:</b> failed (${escapeHtml(local.localRpc.error)})`);
   }
   if (local.systemd?.length) {
-    lines.push(`Systemd: ${local.systemd.map((item) => `${item.service}=${item.state}`).join(', ')}`);
+    lines.push(`${statusIcon(local.systemd.every((item) => item.ok) ? 'ok' : 'critical')} <b>Systemd:</b> ${escapeHtml(local.systemd.map((item) => `${item.service}=${item.state}`).join(', '))}`);
   }
   if (local.processes?.length) {
-    lines.push(`Process: ${local.processes.map((item) => `${item.name}=${item.ok ? 'running' : 'missing'}`).join(', ')}`);
+    lines.push(`${statusIcon(local.processes.every((item) => item.ok) ? 'ok' : 'warning')} <b>Process:</b> ${escapeHtml(local.processes.map((item) => `${item.name}=${processStateText(item)}`).join(', '))}`);
   }
   if (local.disks?.length) {
-    lines.push(`Disk: ${local.disks.map((item) => `${item.path} ${item.usedPercent ?? '?'}%`).join(', ')}`);
+    lines.push(`${statusIcon(local.disks.every((item) => item.ok) ? 'ok' : 'warning')} <b>Disk:</b> ${escapeHtml(local.disks.map((item) => `${item.path} ${item.usedPercent ?? '?'}%`).join(', '))}`);
   }
   if (local.memory) {
-    lines.push(`Memory: ${local.memory.usedPercent}% used`);
+    lines.push(`${statusIcon(local.memory.status)} <b>Memory:</b> ${local.memory.usedPercent}% used`);
   }
   if (local.issues?.length) {
-    lines.push('Machine issues:');
+    lines.push('');
+    lines.push('<b>Needs attention</b>');
     for (const issue of local.issues.slice(0, 6)) {
-      lines.push(`- ${issue.severity.toUpperCase()}: ${issue.message}`);
+      lines.push(`${statusIcon(issue.severity)} ${escapeHtml(issue.message)}`);
     }
+  } else {
+    lines.push('');
+    lines.push('\u2705 <b>Checks:</b> No machine issues found.');
   }
   return lines;
 }
@@ -461,10 +508,7 @@ function connectCommand(token) {
 }
 
 function chatNodeStatus(chat) {
-  if (!chat.agent?.lastSeenAt) return 'not-connected';
-  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(chat.agent.lastSeenAt)) / 1000));
-  if (seconds > config.thresholds.pollSeconds * 3) return 'stale';
-  return chat.agent.snapshot?.local?.status ?? 'unknown';
+  return machineStatusFromAgent(chat.agent);
 }
 
 async function assessChat(chat) {
@@ -507,7 +551,7 @@ async function assessChat(chat) {
 
   const nodeStatus = chatNodeStatus(chat);
   if (nodeStatus === 'stale') {
-    issues.push({ severity: 'critical', text: 'Machine alerts heartbeat is stale' });
+    issues.push({ severity: 'warning', text: 'Machine alerts heartbeat is delayed' });
   } else if (nodeStatus === 'critical') {
     issues.push({ severity: 'critical', text: 'Machine node checks are critical' });
   } else if (nodeStatus === 'warning') {
@@ -542,7 +586,7 @@ async function assessChat(chat) {
   }
 
   lines.push('');
-  lines.push(`${statusIcon(nodeStatus === 'not-connected' ? 'info' : nodeStatus)} <b>Machine alerts:</b> ${escapeHtml(nodeStatus === 'not-connected' ? 'not connected' : nodeStatus)}`);
+  lines.push(`${statusIcon(nodeStatus)} <b>Machine alerts:</b> ${escapeHtml(machineStatusText(nodeStatus))}`);
 
   if (issues.length) {
     lines.push('');
@@ -667,6 +711,7 @@ async function handleTelegramMessage(message) {
 
   if (command === '/node') {
     await telegram.sendMessage(chatId, summarizeAgent(chat.agent).join('\n'), {
+      parseMode: 'HTML',
       replyMarkup: dashboardKeyboard(),
     });
     return;

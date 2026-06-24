@@ -23,6 +23,7 @@
     "diskWarnPercent": 85,
     "diskCriticalPercent": 93,
     "memoryWarnPercent": 92,
+    "machineHeartbeatStaleSeconds": 300,
     "proposalMaxMissedBlocks": 0
   }
 }

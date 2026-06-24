@@ -93,6 +93,10 @@ export async function loadConfig() {
       value(fileConfig, 'thresholds.memoryWarnPercent', 'ASENIX_MEMORY_WARN_PERCENT', 92),
       92,
     ),
+    machineHeartbeatStaleSeconds: numberValue(
+      value(fileConfig, 'thresholds.machineHeartbeatStaleSeconds', 'ASENIX_MACHINE_HEARTBEAT_STALE_SECONDS', 300),
+      300,
+    ),
     pollSeconds: numberValue(
       value(fileConfig, 'thresholds.pollSeconds', 'ASENIX_POLL_SECONDS', 60),
       60,

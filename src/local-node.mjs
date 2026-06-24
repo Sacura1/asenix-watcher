@@ -48,6 +48,16 @@ async function checkProcesses(names) {
   });
 }
 
+function parseSystemdProperties(text) {
+  const properties = {};
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    properties[line.slice(0, separator)] = line.slice(separator + 1);
+  }
+  return properties;
+}
+
 async function checkSystemd(services) {
   if (!services.length || process.platform === 'win32') return [];
   return Promise.all(
@@ -59,14 +69,54 @@ async function checkSystemd(services) {
         '--property=ActiveState,SubState,MainPID,NRestarts',
         '--no-pager',
       ]);
+      const properties = parseSystemdProperties(detail.stdout);
+      const state = active.stdout.trim() || properties.ActiveState || active.stderr.trim();
+      const mainPid = Number(properties.MainPID ?? 0);
       return {
         detail: detail.stdout.trim(),
-        ok: active.stdout.trim() === 'active',
+        mainPid: Number.isFinite(mainPid) ? mainPid : 0,
+        ok: active.stdout.trim() === 'active' || properties.ActiveState === 'active',
+        restartCount: properties.NRestarts ?? null,
         service,
-        state: active.stdout.trim() || active.stderr.trim(),
+        state,
+        subState: properties.SubState ?? null,
       };
     }),
   );
+}
+
+function comparableUnitName(name) {
+  return String(name ?? '')
+    .toLowerCase()
+    .replace(/\.service$/, '')
+    .trim();
+}
+
+function systemdServiceForProcess(processName, systemd) {
+  const normalizedProcess = comparableUnitName(processName);
+  return systemd.find((item) =>
+    item.ok &&
+    comparableUnitName(item.service) === normalizedProcess &&
+    (!item.mainPid || item.mainPid > 0)
+  );
+}
+
+function reconcileProcessesWithSystemd(processes, systemd) {
+  if (!processes.length || !systemd.length) return processes;
+  return processes.map((item) => {
+    if (item.ok) return item;
+    const service = systemdServiceForProcess(item.name, systemd);
+    if (!service) return item;
+    const pidText = service.mainPid ? `, main pid ${service.mainPid}` : '';
+    return {
+      ...item,
+      coveredBy: 'systemd',
+      matches: [`systemd ${service.service} is ${service.state}${pidText}`],
+      ok: true,
+      skipped: true,
+      systemdService: service.service,
+    };
+  });
 }
 
 async function checkDocker(containers) {
@@ -213,7 +263,7 @@ function addIssue(issues, severity, message) {
 }
 
 export async function checkLocalNode(config, publicHeight = null) {
-  const [processes, systemd, docker, disks, logs, localRpc] = await Promise.all([
+  const [rawProcesses, systemd, docker, disks, logs, localRpc] = await Promise.all([
     checkProcesses(config.local.processNames),
     checkSystemd(config.local.systemdServices),
     checkDocker(config.local.dockerContainers),
@@ -221,11 +271,16 @@ export async function checkLocalNode(config, publicHeight = null) {
     checkLogs(config.local.logFiles),
     checkLocalRpc(config, publicHeight),
   ]);
+  const processes = reconcileProcessesWithSystemd(rawProcesses, systemd);
   const memory = checkMemory(config.thresholds);
   const issues = [];
 
   for (const item of processes) {
-    if (!item.ok) addIssue(issues, 'critical', `Process not found: ${item.name}`);
+    if (!item.ok && localRpc?.ok) {
+      addIssue(issues, 'warning', `Process name not matched: ${item.name}, but local node RPC is healthy`);
+    } else if (!item.ok) {
+      addIssue(issues, 'critical', `Process not found: ${item.name}`);
+    }
   }
   for (const item of systemd) {
     if (!item.ok) addIssue(issues, 'critical', `Systemd service is not active: ${item.service} (${item.state || 'unknown'})`);

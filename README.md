@@ -105,6 +105,7 @@ ASENIX_POLL_SECONDS=60
 ASENIX_REMINDER_MINUTES=60
 ASENIX_PUBLIC_BLOCK_STALE_SECONDS=600
 ASENIX_PUBLIC_BLOCK_CRITICAL_SECONDS=3600
+ASENIX_MACHINE_HEARTBEAT_STALE_SECONDS=300
 ASENIX_WATCHER_SERVER_STATE=/data/watcher-server-state.json
 ```
 
@@ -118,6 +119,10 @@ are repeated after the first alert.
 `ASENIX_PUBLIC_BLOCK_STALE_SECONDS` controls when the bot warns that public chain
 blocks look stale. `ASENIX_PUBLIC_BLOCK_CRITICAL_SECONDS` controls when that
 becomes a critical chain-health alert.
+
+`ASENIX_MACHINE_HEARTBEAT_STALE_SECONDS` controls how long the hosted bot waits
+before marking Machine alerts as delayed. Delayed heartbeats are warnings, not
+critical node failures.
 
 ## Running The Server
 
